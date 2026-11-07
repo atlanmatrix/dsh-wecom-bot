@@ -1,0 +1,50 @@
+{
+  "name": "dsh-wecom-bot",
+  "version": "0.1.0",
+  "description": "WeCom AI bot two-way chat bridge for DeepSeek Harness.",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./webhook": "./src/webhook.js"
+  },
+  "files": [
+    "src",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=24.9.0",
+    "dsh": ">=0.2.2-rc.1"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check src/index.js && node --check src/bridge.js && node --check src/agent.js && node --check src/client.js && node --check src/webhook.js"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.1.0",
+    "@deepseek-ai/dsh-agent-loop-testkit": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-system-prompt": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-tool-executor-native": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-tools": "0.2.2-rc.1",
+    "ws": "8.21.0"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "3.19.0",
+    "@wecom/aibot-node-sdk": "1.0.7",
+    "https-proxy-agent": "7.0.6"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-llm": "0.2.2-rc.1"
+  }
+}
