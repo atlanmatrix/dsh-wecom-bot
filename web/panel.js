@@ -4,13 +4,24 @@ export const dictionaries = {
   en: { title: 'Wecom Bot', intro: 'Connect a WeCom AI bot and review its conversations in Harness.', botId: 'Bot ID', secret: 'Secret', configured: 'Configured · leave blank to keep', cwd: 'Working directory (absolute path)', users: 'Allowed user IDs (one per line; empty allows all bot contacts)', save: 'Save configuration', connect: 'Connect', disconnect: 'Disconnect', sessions: 'Conversations', empty: 'No conversations yet. Connect your bot, then send it a text message in WeCom.', review: 'Review in DSH', user: 'User', group: 'Group', single: 'Direct message', loading: 'Loading…', retry: 'Retry', error: 'The operation failed. Check the configuration and try again.', saved: 'Configuration saved. Click Connect when ready.', unconfigured: 'Not configured', disconnected: 'Disconnected', connecting: 'Connecting', connected: 'Connected', connectionError: 'Connection error', hint: 'The Secret is stored by Harness and is never returned to this page. Conversations use DSH’s session interface and inherit its default model, preset, tools and permissions. Change a conversation’s model in its DSH session.', refresh: 'Refresh', unsaved: 'Save changes before connecting.' },
   zh: { title: 'Wecom Bot', intro: '连接企业微信智能机器人，并在 Harness 中查看和 review 对话。', botId: 'Bot ID', secret: 'Secret', configured: '已配置，留空保持不变', cwd: '工作目录（绝对路径）', users: '允许的用户 ID（每行一个；留空允许所有机器人联系人）', save: '保存配置', connect: '连接机器人', disconnect: '断开连接', sessions: '机器人对话', empty: '暂无对话。连接机器人后，在企业微信中发送文本消息。', review: '在 DSH 中 review', user: '用户', group: '群组', single: '单聊', loading: '加载中…', retry: '重试', error: '操作失败，请检查配置后重试。', saved: '配置已保存，请点击连接机器人。', unconfigured: '未配置', disconnected: '未连接', connecting: '连接中', connected: '已连接', connectionError: '连接错误', hint: 'Secret 由 Harness 凭据服务保存，不会回传到此页面。对话通过 DSH 会话接口处理，继承默认模型、预设、工具和权限；可在对应的 DSH 会话中切换模型。', refresh: '刷新', unsaved: '请先保存配置，再连接机器人。' },
 }
+const failureKey = (failure, action) => {
+  if (failure?.code === 'remote-access/denied') return 'ownerError'
+  if (['gateway/invocation-unavailable', 'gateway/definition-unavailable', 'gateway/method-unavailable'].includes(failure?.code)) return 'interfaceError'
+  const key = { 'cwd-not-absolute': 'cwdAbsoluteError', 'cwd-unavailable': 'cwdUnavailableError', 'cwd-not-directory': 'cwdDirectoryError', 'secret-required': 'secretRequiredError', 'new-bot-secret-required': 'newSecretError', 'credential-save-failed': 'credentialSaveError' }[failure?.details?.reason]
+  return key ?? (action === 'state' ? 'readError' : action === 'configure' ? 'saveError' : 'requestError')
+}
+const errorCopy = {
+  en: { ownerError: 'This operation requires the DSH owner. Reopen the page with an owner login.', interfaceError: 'The Wecom Bot interface is unavailable. Check the installed plugin version and restart DSH.', cwdAbsoluteError: 'Enter an absolute working directory on the DSH server.', cwdUnavailableError: 'The working directory does not exist or is not readable on the DSH server. A path on your own computer may not exist on the server.', cwdDirectoryError: 'The working directory is a file. Choose a directory on the DSH server.', secretRequiredError: 'Enter the robot Secret.', newSecretError: 'Enter the Secret for the new Bot ID.', credentialSaveError: 'DSH could not save the Bot credentials. Check the credential store’s write permissions and disk space.', readError: 'Could not read the Bot settings from DSH. Check the connection or plugin service, then retry.', saveError: 'DSH rejected the configuration. Check the fields, plugin version and server credential store, then retry.', requestError: 'The request did not complete. Check the DSH connection and retry.' },
+  zh: { ownerError: '此操作需要 DSH owner 权限，请使用 owner 登录入口重新打开页面。', interfaceError: 'Wecom Bot 接口不可用，请检查插件版本并重启 DSH。', cwdAbsoluteError: '请输入 DSH 服务器上的绝对工作目录。', cwdUnavailableError: '工作目录在 DSH 服务器上不存在或无法读取；你本机上的路径不一定存在于服务器。', cwdDirectoryError: '工作目录指向了文件，请选择 DSH 服务器上的目录。', secretRequiredError: '请输入机器人 Secret。', newSecretError: '更换 Bot ID 后需要输入对应的新 Secret。', credentialSaveError: 'DSH 无法保存机器人凭据，请检查服务器凭据存储的写入权限和磁盘空间。', readError: '无法从 DSH 读取机器人配置，请检查连接或插件服务后重试。', saveError: 'DSH 拒绝保存配置，请检查表单、插件版本与服务器凭据存储后重试。', requestError: '请求未完成，请检查与 DSH 的连接后重试。' },
+}
+for (const language of Object.keys(errorCopy)) Object.assign(dictionaries[language], errorCopy[language])
 const blank = { botId: '', secret: '', cwd: '', allowedUsers: '' }
 export function Panel({ t, api, openSession }) {
   const [snapshot, setSnapshot] = useState(null)
   const [fields, setFields] = useState(blank)
-  const [busy, setBusy] = useState(false), [error, setError] = useState(false), [notice, setNotice] = useState('')
+  const [busy, setBusy] = useState(false), [error, setError] = useState(null), [notice, setNotice] = useState('')
   const [dirty, setDirty] = useState(false)
-  const mounted = useRef(false), initialized = useRef(false)
+  const mounted = useRef(false), initialized = useRef(false), form = useRef(null)
   const accept = (value, replace = false) => {
     if (!mounted.current) return
     setSnapshot(value)
@@ -22,8 +33,12 @@ export function Panel({ t, api, openSession }) {
     }
   }
   const refresh = async () => {
-    try { const result = await api.state(); if (!result.ok) throw new Error(); accept(result.value); if (mounted.current) setError(false) }
-    catch { if (mounted.current) setError(true) }
+    try {
+      const result = await api.state()
+      if (!result.ok) { if (mounted.current) setError(previous => previous?.action !== 'state' && previous ? previous : { action: 'state', key: failureKey(result.error, 'state') }); return }
+      accept(result.value)
+      if (mounted.current) setError(previous => previous?.action === 'state' ? null : previous)
+    } catch { if (mounted.current) setError(previous => previous ?? { action: 'state', key: 'readError' }) }
   }
   useEffect(() => {
     mounted.current = true
@@ -32,13 +47,13 @@ export function Panel({ t, api, openSession }) {
     return () => { mounted.current = false; clearInterval(timer) }
   }, [])
   const action = async (method, request) => {
-    setBusy(true); setError(false); setNotice('')
+    setBusy(true); setError(null); setNotice('')
     try {
       const result = await api[method](...(request ? [request] : []))
-      if (!result.ok) throw new Error()
+      if (!result.ok) { if (mounted.current) setError({ action: method, key: failureKey(result.error, method) }); return }
       accept(result.value, method === 'configure')
       if (mounted.current && method === 'configure') setNotice(t('saved'))
-    } catch { if (mounted.current) setError(true) }
+    } catch { if (mounted.current) setError({ action: method, key: failureKey(undefined, method) }) }
     finally { if (mounted.current) setBusy(false) }
   }
   const field = (key, type = 'text') => h('label', { key }, t(key), h('input', {
@@ -53,9 +68,9 @@ export function Panel({ t, api, openSession }) {
     h('div', { className: 'wecom-content' },
       h('header', null, h('h1', null, t('title')), h('span', { role: 'status', className: 'wecom-status' }, status ? t(status) : t('loading'))),
       h('p', null, t('intro')),
-      error && h('div', { role: 'alert' }, t('error'), ' ', h('button', { type: 'button', disabled: busy, onClick: refresh }, t('retry'))),
+      error && h('div', { role: 'alert' }, t(error.key), ' ', h('button', { type: 'button', disabled: busy, onClick: () => error.action === 'configure' ? form.current?.requestSubmit() : error.action === 'state' ? refresh() : action(error.action) }, t('retry'))),
       notice && h('p', { role: 'status' }, notice),
-      h('form', { onSubmit: event => {
+      h('form', { ref: form, onSubmit: event => {
         event.preventDefault()
         const { secret, allowedUsers, ...values } = fields
         delete values.secretConfigured

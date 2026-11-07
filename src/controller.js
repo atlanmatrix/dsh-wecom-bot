@@ -49,13 +49,22 @@ export class WecomBotController extends Service {
   configure(request) {
     return this.enqueue(async () => {
       const parsed = configurationSchema.parse(request)
-      if (!isAbsolute(parsed.cwd) || !(await stat(parsed.cwd)).isDirectory()) throw new Error('Choose an existing absolute working directory.')
+      if (!isAbsolute(parsed.cwd)) throw new RemoteError('gateway/bad-request', 'Choose an absolute directory on the DSH server.', { reason: 'cwd-not-absolute' })
+      let directory
+      try { directory = await stat(parsed.cwd) } catch {
+        throw new RemoteError('gateway/bad-request', 'The working directory does not exist or cannot be read on the DSH server.', { reason: 'cwd-unavailable' })
+      }
+      if (!directory.isDirectory()) throw new RemoteError('gateway/bad-request', 'The working directory must be a directory on the DSH server.', { reason: 'cwd-not-directory' })
       const secret = parsed.secret ?? this.current?.secret
-      if (!secret) throw new Error('Enter the robot Secret.')
+      if (!secret) throw new RemoteError('gateway/bad-request', 'Enter the robot Secret.', { reason: 'secret-required' })
       // A changed bot cannot silently inherit the previous bot's credentials.
-      if (this.current && parsed.botId !== this.current.botId && !parsed.secret) throw new Error('Enter the Secret for the new Bot ID.')
+      if (this.current && parsed.botId !== this.current.botId && !parsed.secret) throw new RemoteError('gateway/bad-request', 'Enter the Secret for the new Bot ID.', { reason: 'new-bot-secret-required' })
       const next = { ...parsed, secret }
-      await this.ctx.credentials.modifyRecord(this.credentialKey, () => ({ kind: 'grant', payload: { configuration: next, enabled: false } }))
+      try {
+        await this.ctx.credentials.modifyRecord(this.credentialKey, () => ({ kind: 'grant', payload: { configuration: next, enabled: false } }))
+      } catch (cause) {
+        throw new RemoteError('gateway/internal', 'Could not save Bot credentials in the DSH credential store.', { reason: 'credential-save-failed' }, { cause })
+      }
       await this.stopBridge()
       this.current = next
       this.status = 'disconnected'

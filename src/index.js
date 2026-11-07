@@ -1,9 +1,9 @@
 import z from '@deepseek-ai/schemastery'
 import AiBot from '@wecom/aibot-node-sdk'
 import { HttpsProxyAgent } from 'https-proxy-agent'
-import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
 import { resolve, join } from 'node:path'
+import { migrateProfileCredential } from './credential-key.js'
 import { createAgentRunner } from './agent.js'
 import { createBridge } from './bridge.js'
 import { SessionCatalog } from './catalog.js'
@@ -22,7 +22,7 @@ export const Config = z.object({
 export async function apply(ctx, config = {}) {
   const profile = process.env.DSH_PROFILE_DIR ?? join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'profiles', process.env.DSH_PROFILE ?? 'default')
   const dataDir = resolve(config.dataDir ?? join(profile, 'wecom-bot'))
-  const credentialKey = `wecom-bot/${createHash('sha256').update(dataDir).digest('hex').slice(0, 24)}`
+  const credentialKey = await migrateProfileCredential(ctx.credentials, dataDir)
   const catalog = new SessionCatalog(join(dataDir, 'sessions.json'))
   await catalog.load()
   ctx.typert.register({ package: 'dsh-wecom-bot', face: 'host', schemas: [], model: { services: [], events: [], objects: [] }, invocations: remoteContribution.descriptors })

@@ -1,6 +1,6 @@
 {
   "name": "dsh-wecom-bot",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "WeCom AI bot two-way chat bridge for DeepSeek Harness.",
   "type": "module",
   "main": "./src/index.js",
@@ -18,7 +18,8 @@
     "locale/*.json",
     "icon.svg",
     "README.md",
-    "dist/client.js"
+    "dist/client.js",
+    "scripts/repair-credentials.mjs"
   ],
   "engines": {
     "node": ">=24.9.0",
@@ -42,11 +43,13 @@
   },
   "scripts": {
     "test": "node --test test/*.test.js",
-    "check": "node --check src/index.js && node --check src/agent.js && node --check src/bridge.js && node --check src/controller.js && node --check src/catalog.js && node --check dist/client.js",
+    "check": "node --check src/index.js && node --check src/agent.js && node --check src/bridge.js && node --check src/controller.js && node --check src/catalog.js && node --check dist/client.js && node --check src/credential-key.js && node --check scripts/repair-credentials.mjs",
     "build": "node scripts/build.mjs",
     "prepack": "npm run build",
     "test:browser": "npm run build && node --test browser-tests/ui.mjs",
-    "test:dsh": "npm run build && node --test browser-tests/dsh-live.mjs"
+    "test:dsh": "npm run build && node --test browser-tests/dsh-live.mjs",
+    "repair:credentials": "node scripts/repair-credentials.mjs",
+    "test:installed": "node --test browser-tests/installed-dsh.mjs"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.1.0",
@@ -72,10 +75,12 @@
     "@deepseek-ai/schemastery": "3.19.0",
     "@wecom/aibot-node-sdk": "1.0.7",
     "https-proxy-agent": "7.0.6",
+    "yaml": "2.9.1",
     "zod": "4.4.3"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-llm": "0.2.2-rc.1",
-    "@deepseek-ai/cordis": "~4.1.0"
+    "@deepseek-ai/cordis": "~4.1.0",
+    "@deepseek-ai/dsh-credentials": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-llm": "0.2.2-rc.1"
   }
 }

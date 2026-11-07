@@ -14,7 +14,7 @@
    ```
 
 2. 在 Harness 插件管理器中安装本地仓库绝对路径。例如，在提供 `plugin_manager` 的 Harness 会话中，使用 `action: install_bundle`、`target: /workspace/dsh-wecom-bot`。在其他机器上替换为实际路径。
-3. 安装或更新后重启 Harness，左侧将出现 **Wecom Bot**。
+3. 更新时先卸载旧插件再安装新版本，避免包管理器保留旧来源链接。安装或更新后重启 Harness，左侧将出现 **Wecom Bot**。
 4. 点击菜单，填写企业微信 **API 模式 / 长连接**智能机器人的 **Bot ID**、**Secret**，填写工作目录；模型沿用 DSH 自己的会话设置。可填写允许访问机器人的企微用户 ID，每行一个；留空允许所有能联系机器人的用户。
 5. 点击 **保存配置**，再点击 **连接机器人**。状态变为“已连接”后即可在企微中单聊或群内 @机器人。
 
@@ -81,6 +81,28 @@ npm pack --dry-run
 `test:browser` 使用本机 Chromium，默认 `/usr/bin/chromium`，其他位置可设置 `CHROMIUM_PATH`。
 
 测试覆盖官方企微 SDK、本地 WebSocket、真实 DSH AgentLoop、配置 RPC、凭据落盘与 Secret 脱敏、用户权限、五种隔离路由、真实 JSONL session 恢复、标题、超时、配置页表单和 review 导航。模型使用确定性测试适配器，不调用真实模型，也不向企业微信联系人发送测试消息。已用 DSH Web 的实际侧栏检查菜单与页面加载；真实机器人认证仍需用户自己的 Bot ID 和 Secret。
+
+## 0.2.2：凭据 ID 修复与恢复
+
+0.2.1 及之前版本直接把目录哈希作为 DSH 凭据 ID。哈希可能以数字开头，而 DSH 要求 ID 以字母开头，可能导致凭据加载失败、DSH 无法重启。0.2.2 使用官方 `credentialKey()` 和合法的 `profile-` 前缀；仍可读取的旧记录会自动迁移。
+
+如果旧版本已经写入非法记录，凭据服务会先于插件启动失败，因此仅更新插件不能修复磁盘上的旧记录。请停止 DSH，在插件仓库中执行：
+
+```sh
+# 使用 credentials-local 实际配置的文件路径；默认是 $DSH_HOME/.credentials.yaml。
+npm run repair:credentials -- --check /absolute/path/to/.credentials.yaml
+npm run repair:credentials -- /absolute/path/to/.credentials.yaml
+```
+
+修复只重命名本插件旧格式的记录 ID，不修改 Secret、其他插件记录或模型凭据。写入前会生成权限为 `0600` 的备份；存在新旧记录冲突时会拒绝覆盖。命令只输出修改条数和备份路径，不输出凭据值。安装包也包含 `scripts/repair-credentials.mjs`，可在已安装插件目录中用 Node 运行同一个脚本。
+
+已增加安装包级别的浏览器回归：
+
+```sh
+DSH_CLI=/absolute/path/to/dsh npm run test:installed
+```
+
+此测试在全新 profile 通过官方 CLI 安装 `.tgz`，通过浏览器保存配置，模拟不可写的凭据存储，最后完整重启 DSH 验证配置恢复。测试特意选择旧哈希以数字开头的路径，不使用源码软链接或模拟 Host。设置 `DSH_TEST_ARTIFACTS` 可保留截图与不含密钥的报告。临时环境只配置一个可写的 Documents 目录，机器人不连接真实企业微信。
 
 ## 从 0.2.0 升级
 

@@ -12,6 +12,7 @@ import Credentials from '@deepseek-ai/dsh-credentials-local'
 import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
 import Gateway from '@deepseek-ai/dsh-api-gateway'
 import RemoteAccess from '@deepseek-ai/dsh-api-remote-access'
+import { remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
 import { Peer } from '@deepseek-ai/dsh-client-connection'
 import { WecomBotController } from '../src/controller.js'
 import { SessionCatalog } from '../src/catalog.js'
@@ -20,7 +21,7 @@ import { remoteContribution } from '../src/remote.js'
 test('bundled client: menu registration, configuration RPC, Secret redaction, review navigation, and mobile layout', { timeout: 30000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'wecom-browser-'))
   const ctx = new Context()
-  let browser, server, controller
+  let browser, server, controller, configureRequests = 0
   try {
     await ctx.plugin(Credentials, { path: join(directory, '.credentials.yaml'), watch: false })
     await ctx.plugin(TypertRegistry); await ctx.plugin(RemoteAccess); await ctx.plugin(Gateway)
@@ -47,12 +48,13 @@ createRoot(document.getElementById('app')).render(React.createElement(page.Compo
       try {
         if (req.url === '/app.js') { res.setHeader('Content-Type', 'application/javascript'); res.end(fixture.outputFiles[0].text); return }
         if (req.url.startsWith('/rpc/')) {
+          if (req.url === '/rpc/configure') configureRequests++
           const args = JSON.parse(Buffer.concat(await Array.fromAsync(req)).toString() || '{}')
           const value = await ctx.typertGateway.invoke({ namespace: 'wecomBot', method: req.url.slice(5), args, peer: owner })
           res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ ok: true, value })); return
         }
         res.setHeader('Content-Type', 'text/html'); res.end('<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body,#app{height:100%;margin:0;font:14px system-ui}</style><div id="app"></div><script type="module" src="/app.js"></script></html>')
-      } catch { res.end(JSON.stringify({ ok: false })) }
+      } catch (error) { const failure = remoteErrorOf(error); res.end(JSON.stringify({ ok: false, error: failure ? { code: failure.code, details: failure.details } : { code: 'gateway/internal', details: {} } })) }
     })
     server.listen(0, '127.0.0.1'); await once(server, 'listening')
     browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH ?? '/usr/bin/chromium', args: ['--no-sandbox'] })
@@ -63,9 +65,16 @@ createRoot(document.getElementById('app')).render(React.createElement(page.Compo
     assert.deepEqual(await page.evaluate(() => window.menuRegistration), { id: 'wecom-bot', label: 'Wecom Bot' })
     await page.getByLabel('Bot ID', { exact: true }).fill('browser-bot')
     await page.getByLabel('Secret', { exact: true }).fill('browser-private-secret')
-    await page.getByLabel('工作目录（绝对路径）', { exact: true }).fill(directory)
+    await page.getByLabel('工作目录（绝对路径）', { exact: true }).fill(join(directory, 'not-on-server'))
     await page.getByRole('button', { name: '保存配置', exact: true }).click()
+    await page.getByRole('alert').filter({ hasText: '工作目录在 DSH 服务器上不存在或无法读取' }).waitFor()
+    await page.getByRole('button', { name: '刷新', exact: true }).click()
+    assert.ok((await page.getByRole('alert').innerText()).includes('工作目录在 DSH 服务器上不存在'))
+    await page.getByLabel('工作目录（绝对路径）', { exact: true }).fill(directory)
+    await page.getByRole('button', { name: '重试', exact: true }).click()
+
     await page.getByText('配置已保存，请点击连接机器人。', { exact: true }).waitFor()
+    assert.equal(configureRequests, 2)
     assert.equal(await page.getByLabel('Secret', { exact: true }).inputValue(), '')
     assert.ok(!(await page.content()).includes('browser-private-secret'))
     await page.getByRole('button', { name: '连接机器人', exact: true }).click()

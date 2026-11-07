@@ -92,3 +92,21 @@ test('old bot model overrides are removed on upgrade without losing credentials'
     await assert.rejects(fixture.invoke('configure', { request: { ...connection, provider: 'forbidden' } }))
   } finally { await fixture?.controller.close(); await fixture?.ctx.fiber.dispose(); await rm(path, { recursive: true, force: true }) }
 })
+
+
+test('configuration failures identify server directories and credential storage without exposing secrets', async () => {
+  const path = await mkdtemp(join(tmpdir(), 'wecom-errors-'))
+  let fixture
+  try {
+    fixture = await setup(path)
+    for (const [cwd, reason] of [['relative-path', 'cwd-not-absolute'], [join(path, 'missing'), 'cwd-unavailable']]) {
+      await assert.rejects(fixture.invoke('configure', { request: { ...connection, cwd } }), error => error.details.reason === reason && !error.message.includes(connection.secret))
+    }
+    const original = fixture.ctx.credentials.modifyRecord
+    fixture.ctx.credentials.modifyRecord = async () => { throw new Error('private storage failure ' + connection.secret) }
+    try {
+      await assert.rejects(fixture.invoke('configure', { request: connection }), error => error.details.reason === 'credential-save-failed' && !error.message.includes(connection.secret))
+    } finally { fixture.ctx.credentials.modifyRecord = original }
+    assert.equal((await fixture.invoke('state')).status, 'unconfigured')
+  } finally { await fixture?.controller.close(); await fixture?.ctx.fiber.dispose(); await rm(path, { recursive: true, force: true }) }
+})
