@@ -14,7 +14,7 @@ import { SessionCatalog } from '../src/catalog.js'
 import { remoteContribution } from '../src/remote.js'
 import * as plugin from '../src/index.js'
 
-const connection = { botId: 'test-bot', secret: 'test-private-secret', provider: 'mock', model: 'mock', cwd: '/tmp', allowedUsers: ['user1'] }
+const connection = { botId: 'test-bot', secret: 'test-private-secret', cwd: '/tmp', allowedUsers: ['user1'] }
 async function setup(path) {
   const ctx = new Context()
   await ctx.plugin(Credentials, { path: join(path, '.credentials.yaml'), watch: false })
@@ -43,7 +43,7 @@ test('owner RPC configures credentials, preserves Secret, connects/disconnects, 
     assert.equal(saved.configuration.secretConfigured, true)
     assert.ok(!JSON.stringify(saved).includes(connection.secret))
     const { secret, ...withoutSecret } = connection
-    await fixture.invoke('configure', { request: { ...withoutSecret, model: 'updated' } })
+    await fixture.invoke('configure', { request: { ...withoutSecret, allowedUsers: ['user2'] } })
     assert.equal((await fixture.ctx.credentials.readRecord('wecom-bot/test')).payload.configuration.secret, secret)
     await assert.rejects(fixture.invoke('configure', { request: { ...withoutSecret, botId: 'other' } }), /Secret/)
     assert.equal((await fixture.invoke('connect')).status, 'connected')
@@ -52,7 +52,7 @@ test('owner RPC configures credentials, preserves Secret, connects/disconnects, 
     await fixture.controller.close(); await fixture.ctx.fiber.dispose()
     fixture = await setup(path)
     await fixture.controller.initialize()
-    assert.equal((await fixture.invoke('state')).configuration.model, 'updated')
+    assert.equal((await fixture.invoke('state')).configuration.allowedUsers[0], 'user2')
     assert.equal((await fixture.invoke('state')).status, 'disconnected')
     await assert.rejects(fixture.invoke('configure', { request: { ...connection, unexpected: 'x' } }))
     const visitor = new Peer(fixture.ctx, { principal: { kind: 'guest' } })
@@ -68,10 +68,27 @@ test('unconfigured Host plugin loads and exposes its control page without any bo
     await ctx.plugin(Credentials, { path: join(path, '.credentials.yaml'), watch: false })
     await ctx.plugin(TypertRegistry)
     // Only the empty-plugin startup path needs an agent registry; it must never create an agent.
-    ctx.provide('agents')
-    ctx.agents = { create() { assert.fail('Unconfigured startup must not create agents') } }
+    ctx.provide('sessionController', { create() { assert.fail('Unconfigured startup must not create sessions') } })
     await ctx.plugin(plugin, { dataDir: path })
     assert.equal(ctx.wecomBot.state().status, 'unconfigured')
     assert.equal(ctx.typert.local.get('wecomBot/configure').parameters[0].wire, 'request')
   } finally { await ctx.fiber.dispose(); await rm(path, { recursive: true, force: true }) }
+})
+
+
+test('old bot model overrides are removed on upgrade without losing credentials', async () => {
+  const path = await mkdtemp(join(tmpdir(), 'wecom-upgrade-'))
+  let fixture
+  try {
+    fixture = await setup(path)
+    await fixture.ctx.credentials.modifyRecord('wecom-bot/test', () => ({ kind: 'grant', payload: { configuration: { ...connection, provider: 'old-provider', model: 'old-model' }, enabled: false } }))
+    await fixture.controller.initialize()
+    const state = await fixture.invoke('state')
+    assert.equal('provider' in state.configuration, false)
+    assert.equal('model' in state.configuration, false)
+    const record = await fixture.ctx.credentials.readRecord('wecom-bot/test')
+    assert.equal(record.payload.configuration.secret, connection.secret)
+    assert.equal('model' in record.payload.configuration, false)
+    await assert.rejects(fixture.invoke('configure', { request: { ...connection, provider: 'forbidden' } }))
+  } finally { await fixture?.controller.close(); await fixture?.ctx.fiber.dispose(); await rm(path, { recursive: true, force: true }) }
 })

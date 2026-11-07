@@ -1,6 +1,6 @@
 {
   "name": "dsh-wecom-bot",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "WeCom AI bot two-way chat bridge for DeepSeek Harness.",
   "type": "module",
   "main": "./src/index.js",
@@ -41,7 +41,7 @@
     }
   },
   "scripts": {
-    "test": "node --test",
+    "test": "node --test test/*.test.js",
     "check": "node --check src/index.js && node --check src/agent.js && node --check src/bridge.js && node --check src/controller.js && node --check src/catalog.js && node --check dist/client.js",
     "build": "node scripts/build.mjs",
     "prepack": "npm run build",

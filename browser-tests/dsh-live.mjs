@@ -25,19 +25,40 @@ test('actual DSH sidebar opens Wecom Bot and reviews separate users in native tr
     await symlink(repo, join(modules, 'dsh-wecom-bot'), 'dir')
     const fixturePath = join(directory, 'fixture.mjs')
     await writeFile(fixturePath, `
+import assert from 'node:assert/strict';
 import {LlmAdapter} from ${JSON.stringify(requireFromDsh.resolve('@deepseek-ai/dsh-llm'))};
 import {createAgentRunner} from ${JSON.stringify(fileURLToPath(new URL('../src/agent.js',import.meta.url)))};
-export const inject=['wecomBot','agents','agentLoop','llm','workspaceRegistry','sessionTitle'];
-class Adapter extends LlmAdapter {async *stream(){const text='DSH review test reply';yield {type:'block-start',index:0,blockType:'text'};yield {type:'block-end',index:0,block:{type:'text',text}};yield {type:'finish',reason:{kind:'stop'}};}}
+export const inject=['wecomBot','sessionController','agentDefaultModel','llm','workspaceRegistry','sessionTitle'];
+const requestedModels=[];
+class Adapter extends LlmAdapter {async resolveModel(provider,model){return {provider,id:model,name:model,context:{contextWindow:1000000}}} async listModels(){return [{id:'mock',name:'Mock'},{id:'review-choice',name:'Review choice'}]} async *stream(options){requestedModels.push(options.model);const text='DSH review test reply';yield {type:'block-start',index:0,blockType:'text'};yield {type:'block-end',index:0,block:{type:'text',text}};yield {type:'finish',reason:{kind:'stop'}};}}
 export async function apply(ctx){
  ctx.llm.registerAdapter(['wecom-local-test'],new Adapter());
- const runner=createAgentRunner(ctx,{catalog:ctx.wecomBot.catalog,provider:'wecom-local-test',model:'mock',cwd:${JSON.stringify(repo)},maxSessions:10});
+ ctx.on('agent/error',({error})=>console.log('fixture model error:',error?.message));
+ ctx.on('session/event',(_session,event)=>{if(event.type==='turn/end'&&event.data.reason.kind!=='completed')console.log('fixture turn ending:',JSON.stringify(event.data.reason));});
+ const runner=createAgentRunner(ctx,{catalog:ctx.wecomBot.catalog,cwd:${JSON.stringify(repo)},maxSessions:10});
  ctx.on('dispose',()=>runner.close());
  for(const userId of ['review-user-a','review-user-b']){const identity={userId,groupId:'review-group-x',chatType:'group'};await runner.run(JSON.stringify(['local-test-bot',identity.chatType,identity.groupId,userId]),'Local WeCom review fixture message',new AbortController().signal,identity);}
+ assert.deepEqual(requestedModels,['mock','mock']);
+ const identity={userId:'review-user-a',groupId:'review-group-x',chatType:'group'};
+ const key=JSON.stringify(['local-test-bot',identity.chatType,identity.groupId,identity.userId]);
+ const record=ctx.wecomBot.catalog.get(key);
+ const resolved=await ctx.sessionController.resolveAgent(record.sessionId);
+ assert.ok(resolved.agent);
+ // This is the same session-local model state the DSH model picker records.
+ resolved.agent.model.select({provider:'wecom-local-test',model:'review-choice'});
+ await runner.run(key,'Keep the session model selected in DSH',new AbortController().signal,identity);
+ assert.equal(requestedModels.at(-1),'review-choice');
+ await runner.close();
+ const reconnected=createAgentRunner(ctx,{catalog:ctx.wecomBot.catalog,cwd:${JSON.stringify(repo)},maxSessions:10});
+ await reconnected.run(key,'Keep the model after robot reconnect',new AbortController().signal,identity);
+ assert.equal(requestedModels.at(-1),'review-choice');
+ assert.equal(ctx.wecomBot.catalog.get(key).sessionId,record.sessionId);
+ await reconnected.close();
+ console.log('DSH_SESSION_MODEL_INHERITANCE_PASS');
 }
 `)
     const overlay = join(directory, 'overlay.yml')
-    await writeFile(overlay, `- insert:\n    - id: wecom-bot\n      name: dsh-wecom-bot\n      config:\n        dataDir: ${JSON.stringify(join(directory,'bot-data'))}\n    - id: wecom-live-fixture\n      name: ${JSON.stringify(fixturePath)}\n`)
+    await writeFile(overlay, `- id: agent-default-model\n  config:\n    provider: wecom-local-test\n    model: mock\n- insert:\n    - id: wecom-bot\n      name: dsh-wecom-bot\n      config:\n        dataDir: ${JSON.stringify(join(directory,'bot-data'))}\n    - id: wecom-live-fixture\n      name: ${JSON.stringify(fixturePath)}\n`)
     child = spawn(process.execPath, [cli, 'web', '--patch', overlay, '--no-open', '--port', '0'], { cwd: repo, env, stdio: ['ignore', 'pipe', 'pipe'] })
     exited = once(child, 'exit')
     const ready = Promise.withResolvers()
@@ -50,6 +71,8 @@ export async function apply(ctx){
     child.stdout.on('data', collect); child.stderr.on('data', collect)
     child.once('exit', () => ready.reject(new Error('DSH test instance exited before startup.')))
     const url = await ready.promise
+    for (let attempt = 0; attempt < 100 && !logs.includes('DSH_SESSION_MODEL_INHERITANCE_PASS'); attempt++) await new Promise(resolve => setTimeout(resolve, 100))
+    assert.ok(logs.includes('DSH_SESSION_MODEL_INHERITANCE_PASS'), 'Native DSH model preservation must execute: ' + logs.split('\n').filter(line => /fixture|Error|Assertion|expected|actual/.test(line)).join('\n').slice(0, 2500))
     browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH ?? '/usr/bin/chromium', args: ['--no-sandbox'] })
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } })
     const errors = []
@@ -64,8 +87,8 @@ export async function apply(ctx){
     await page.getByRole('status').filter({ hasText: 'Not configured' }).waitFor()
     await page.getByLabel('Bot ID', { exact: true }).fill('local-ui-bot')
     await page.getByLabel('Secret', { exact: true }).fill('local-ui-bot-secret')
-    await page.getByLabel('Model provider', { exact: true }).fill('wecom-local-test')
-    await page.getByLabel('Model', { exact: true }).fill('mock')
+    assert.equal(await page.getByLabel('Model provider', { exact: true }).count(), 0)
+    assert.equal(await page.getByLabel('Model', { exact: true }).count(), 0)
     await page.getByLabel('Working directory (absolute path)', { exact: true }).fill(repo)
     await page.getByRole('button', { name: 'Save configuration', exact: true }).click()
     await page.getByText('Configuration saved. Click Connect when ready.', { exact: true }).waitFor()
@@ -77,7 +100,7 @@ export async function apply(ctx){
     assert.equal(new Set(ids).size, 2)
     await review.first().click()
     await page.getByText('Local WeCom review fixture message', { exact: true }).waitFor()
-    await page.getByText('DSH review test reply', { exact: true }).waitFor()
+    await page.getByText('DSH review test reply', { exact: true }).first().waitFor()
     assert.deepEqual(errors, [])
   } finally {
     await browser?.close()

@@ -15,18 +15,18 @@
 
 2. 在 Harness 插件管理器中安装本地仓库绝对路径。例如，在提供 `plugin_manager` 的 Harness 会话中，使用 `action: install_bundle`、`target: /workspace/dsh-wecom-bot`。在其他机器上替换为实际路径。
 3. 安装或更新后重启 Harness，左侧将出现 **Wecom Bot**。
-4. 点击菜单，填写企业微信 **API 模式 / 长连接**智能机器人的 **Bot ID**、**Secret**，填写当前 profile 已配置的模型 Provider ID、模型名称和工作目录。可填写允许访问机器人的企微用户 ID，每行一个；留空允许所有能联系机器人的用户。
+4. 点击菜单，填写企业微信 **API 模式 / 长连接**智能机器人的 **Bot ID**、**Secret**，填写工作目录；模型沿用 DSH 自己的会话设置。可填写允许访问机器人的企微用户 ID，每行一个；留空允许所有能联系机器人的用户。
 5. 点击 **保存配置**，再点击 **连接机器人**。状态变为“已连接”后即可在企微中单聊或群内 @机器人。
 
 **尚未配置时插件也会正常加载。** 不再要求设置 `WECOM_BOT_ID` 和 `WECOM_BOT_SECRET` 环境变量。Secret 由 Harness 凭据服务持久化，页面只显示“已配置”，不会回传原值；修改其他字段时 Secret 留空即可保留。更换 Bot ID 时必须同时输入新的 Secret。
 
-模型凭据继续由 DSH 的模型设置管理。本插件直接调用当前 Harness 的 agent，不启动另一个 DSH，也不另建模型 API 客户端。机器人使用当前 profile 的全局工具和权限，请按用途配置这些能力。
+机器人通过与 DSH UI 相同的 Session Controller 接口创建、恢复会话并提交消息，不再单独配置 Provider 或模型。新会话继承 DSH 默认模型、预设、工具与权限；已有会话保留其模型选择。在对应 DSH 会话中切换模型后，后续企微消息使用该选择，插件不会重置。模型凭据始终由 DSH 管理。
 
 ## 在 DSH 中 review 对话
 
 打开 **Wecom Bot → 机器人对话**，每个条目显示用户、群组和 DSH session ID。点击 **在 DSH 中 review**，打开 DSH 原生会话界面，查看完整上下文、模型回复和工具调用。页面每 3 秒更新会话列表，也可手动刷新。
 
-生成的 session 是普通 DSH 根会话，使用所选工作目录，并通过 DSH 的 session title 服务命名为 `Wecom · 用户 ID · 群 ID`。相应工作目录也会注册为 Workspace，因此可以从 DSH 常规会话列表浏览它们。
+生成的 session 是普通 DSH 根会话，使用所选工作目录，并通过 DSH 的 session title 服务命名为 `Wecom · 用户 ID · 群 ID`。会话创建与 Workspace 关联由 DSH 原生会话接口处理，相应工作目录也会注册为 Workspace，因此可以从 DSH 常规会话列表浏览它们。
 
 ### Session 隔离规则
 
@@ -81,6 +81,10 @@ npm pack --dry-run
 `test:browser` 使用本机 Chromium，默认 `/usr/bin/chromium`，其他位置可设置 `CHROMIUM_PATH`。
 
 测试覆盖官方企微 SDK、本地 WebSocket、真实 DSH AgentLoop、配置 RPC、凭据落盘与 Secret 脱敏、用户权限、五种隔离路由、真实 JSONL session 恢复、标题、超时、配置页表单和 review 导航。模型使用确定性测试适配器，不调用真实模型，也不向企业微信联系人发送测试消息。已用 DSH Web 的实际侧栏检查菜单与页面加载；真实机器人认证仍需用户自己的 Bot ID 和 Secret。
+
+## 从 0.2.0 升级
+
+更新插件后，菜单不再显示 Provider 和模型字段。旧 Bot 配置中的这两个字段会自动移除，Bot ID、Secret、连接状态与 session 映射保留。已经写入 DSH session 的模型选择保持不变，可在 DSH 原生会话页修改。断开机器人不会销毁 DSH 会话。
 
 ## 从 0.1.0 升级
 

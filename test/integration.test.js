@@ -1,3 +1,4 @@
+import { provideTestSessionController } from './helpers/session-controller.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
@@ -34,6 +35,7 @@ test('official WeCom SDK → WebSocket callback → real DSH AgentLoop → WeCom
   try {
     await mountAgentLoopTestDependencies(ctx)
     await mountAgentLoopTestHarness(ctx)
+    provideTestSessionController(ctx)
     ctx.llm.registerAdapter(['mock'], adapter)
     const client = new AiBot.WSClient({ botId: 'local-test-bot', secret: 'local-test-secret', wsUrl: `ws://127.0.0.1:${server.address().port}`, logger: silent })
     client.on('error', complete.reject)
@@ -51,7 +53,7 @@ test('official WeCom SDK → WebSocket callback → real DSH AgentLoop → WeCom
         }
       })
     })
-    bridge = createBridge({ client, runner: createAgentRunner(ctx, { provider: 'mock', model: 'mock', cwd: process.cwd(), maxSessions: 10 }) })
+    bridge = createBridge({ client, runner: createAgentRunner(ctx, { cwd: process.cwd(), maxSessions: 10 }) })
     bridge.start()
     await complete.promise
     assert.equal(adapter.requests.length, 1)
@@ -68,10 +70,11 @@ test('official WeCom SDK → WebSocket callback → real DSH AgentLoop → WeCom
 test('agent runner preserves history, isolates sessions, and rejects capacity overflow', { timeout: 10000 }, async () => {
   const ctx = new Context()
   const adapter = new Adapter()
-  const runner = createAgentRunner(ctx, { provider: 'mock', model: 'mock', cwd: process.cwd(), maxSessions: 2 })
+  const runner = createAgentRunner(ctx, { cwd: process.cwd(), maxSessions: 2 })
   try {
     await mountAgentLoopTestDependencies(ctx)
     await mountAgentLoopTestHarness(ctx)
+    provideTestSessionController(ctx)
     ctx.llm.registerAdapter(['mock'], adapter)
     ctx.provide('subagents', {}) // Older 0.2.2 compositions expose no tree-wait capability.
     const signal = new AbortController().signal
@@ -87,7 +90,7 @@ test('agent runner preserves history, isolates sessions, and rejects capacity ov
 
 test('real DSH agent is cancelled at the request deadline', { timeout: 10000 }, async () => {
   const ctx = new Context()
-  const runner = createAgentRunner(ctx, { provider: 'mock', model: 'mock', cwd: process.cwd(), maxSessions: 1 })
+  const runner = createAgentRunner(ctx, { cwd: process.cwd(), maxSessions: 1 })
   let aborted = false
   class SlowAdapter extends LlmAdapter {
     async *stream(options) {
@@ -101,6 +104,7 @@ test('real DSH agent is cancelled at the request deadline', { timeout: 10000 }, 
   try {
     await mountAgentLoopTestDependencies(ctx)
     await mountAgentLoopTestHarness(ctx)
+    provideTestSessionController(ctx)
     ctx.llm.registerAdapter(['mock'], new SlowAdapter())
     await assert.rejects(runner.run('timeout-user', 'wait forever', AbortSignal.timeout(100)))
     assert.ok(aborted)

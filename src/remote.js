@@ -3,8 +3,6 @@ import { z } from 'zod'
 export const configurationSchema = z.strictObject({
   botId: z.string().trim().min(1).max(256),
   secret: z.string().min(1).max(4096).optional(),
-  provider: z.string().trim().min(1).max(256),
-  model: z.string().trim().min(1).max(256),
   cwd: z.string().trim().min(1),
   allowedUsers: z.array(z.string().trim().min(1)).max(10000),
 })

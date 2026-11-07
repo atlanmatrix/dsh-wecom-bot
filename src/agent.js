@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
-/** Owns agents in the current Harness context; no subprocess and no second model client. */
+/** Route robot messages through the same Session Controller used by the DSH UI. */
 export function createAgentRunner(ctx, config) {
   const handles = new Map()
   let closed = false
   return {
     async run(key, text, signal, identity = {}) {
+      signal.throwIfAborted()
       if (closed) throw new Error('Bridge stopped.')
       let handle = handles.get(key)
       if (!handle) {
@@ -14,34 +14,27 @@ export function createAgentRunner(ctx, config) {
         const saved = config.catalog?.get(key)
         const title = saved?.title ?? `Wecom · ${identity.userId ?? 'user'}${identity.groupId ? ` · ${identity.groupId}` : ''}`
         const creation = (async () => {
-          const workspaceRegistry = ctx.get('workspaceRegistry')
-          if (workspaceRegistry) await workspaceRegistry.create(config.cwd)
-          const existing = saved && ctx.agents.get(saved.sessionId)
-          let acquired
-          if (existing) acquired = { agent: existing, dispose: async () => {} }
-          else if (saved) acquired = await ctx.agents.resume({
-            resumeSessionId: saved.sessionId,
-            agentOptions: { provider: config.provider, model: config.model },
-            setup: (_agentCtx, agent) => { agent.model.select({ provider: config.provider, model: config.model }) },
-          })
-          else acquired = await ctx.agents.create({
-            sessionId: `wecom-${randomUUID()}`,
-            meta: { cwd: config.cwd },
-            agentOptions: { provider: config.provider, model: config.model },
-          })
-          try {
-            if (!saved) ctx.get('sessionTitle')?.rename(acquired.agent.session, title.slice(0, 80))
-            if (config.catalog && !saved) await config.catalog.put({ key, sessionId: acquired.agent.session.id, title,
-              userId: identity.userId ?? '', groupId: identity.groupId ?? '', chatType: identity.chatType ?? 'single', updatedAt: Date.now() })
-            return acquired
-          } catch (error) { await acquired.dispose(); throw error }
+          const controller = ctx.sessionController
+          let sessionId = saved?.sessionId
+          if (!sessionId) {
+            const workspaceRegistry = ctx.get('workspaceRegistry')
+            const workspace = workspaceRegistry && await workspaceRegistry.create(config.cwd)
+            const created = await controller.create(workspace ? { workspaceId: workspace.id } : { cwd: config.cwd })
+            sessionId = created.sessionId
+          }
+          if (!saved) await controller.rename({ sessionId, title: title.slice(0, 80) })
+          if (config.catalog && !saved) await config.catalog.put({ key, sessionId, title,
+            userId: identity.userId ?? '', groupId: identity.groupId ?? '', chatType: identity.chatType ?? 'single', updatedAt: Date.now() })
+          return { sessionId }
         })()
         handles.set(key, creation)
         try { handle = await creation } catch (error) { handles.delete(key); throw error }
-        if (closed) { await handle.dispose(); throw new Error('Bridge stopped.') }
+        if (closed) throw new Error('Bridge stopped.')
       }
       handle = await handle
-      const { agent } = handle
+      const resolved = await ctx.sessionController.resolveAgent(handle.sessionId)
+      if ('error' in resolved) throw resolved.error
+      const { agent } = resolved
       let final = ''
       let failure
       const offEvent = ctx.on('session/event', (session, event) => {
@@ -54,7 +47,7 @@ export function createAgentRunner(ctx, config) {
       const offError = ctx.on('agent/error', payload => {
         if (payload.agent === agent) failure = new Error('Agent failed.')
       })
-      const cancel = () => agent.cancel({ kind: 'hook', reason: 'WeCom request cancelled' })
+      const cancel = () => { try { ctx.sessionController.cancel({ sessionId: agent.session.id }) } catch {} }
       signal.addEventListener('abort', cancel, { once: true })
       try {
         signal.throwIfAborted()
@@ -63,7 +56,7 @@ export function createAgentRunner(ctx, config) {
           if (row) await config.catalog.put({ ...row, updatedAt: Date.now() })
         }
         signal.throwIfAborted()
-        agent.followup(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }))
+        await ctx.sessionController.prompt({ sessionId: agent.session.id, requestId: randomUUID(), mode: 'queue', content: [{ type: 'text', text }] }, signal)
         while (true) {
           await agent.whenIdle()
           const seq = agent.session.seq
@@ -82,7 +75,8 @@ export function createAgentRunner(ctx, config) {
     },
     async close() {
       closed = true
-      await Promise.allSettled([...handles.values()].map(async pending => (await pending).dispose()))
+      // Sessions belong to DSH. Disconnecting a robot must not dispose reviewable sessions.
+      await Promise.allSettled([...handles.values()])
       handles.clear()
     },
   }

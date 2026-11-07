@@ -1,3 +1,4 @@
+import { provideTestSessionController } from './helpers/session-controller.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -25,11 +26,12 @@ async function boot(path) {
   await mountAgentLoopTestDependencies(ctx)
   await ctx.plugin(Persistence, { root: join(path, 'history'), compression: 'none' })
   await mountAgentLoopTestHarness(ctx)
+  provideTestSessionController(ctx)
   await ctx.plugin(Titles, { fallbackMaxWords: 12, fallbackMaxBytes: 160, maxTitleBytes: 512 })
   ctx.llm.registerAdapter(['mock'], adapter)
   const catalog = new SessionCatalog(join(path, 'catalog.json'))
   await catalog.load()
-  const runner = createAgentRunner(ctx, { catalog, provider: 'mock', model: 'mock', cwd: path, maxSessions: 10 })
+  const runner = createAgentRunner(ctx, { catalog, cwd: path, maxSessions: 10 })
   return { ctx, adapter, catalog, runner }
 }
 test('distinct users and groups have durable, titled, reviewable DSH sessions that resume after restart', { timeout: 15000 }, async () => {

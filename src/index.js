@@ -11,7 +11,7 @@ import { WecomBotController } from './controller.js'
 import { remoteContribution } from './remote.js'
 
 export const name = 'wecom-bot'
-export const inject = ['agents', 'credentials', 'typert']
+export const inject = ['sessionController', 'credentials', 'typert']
 export const Config = z.object({
   dataDir: z.string().description('Optional plugin data directory; defaults to this Harness profile.'),
   timeoutMs: z.number().step(1).min(1).max(240000).default(120000),

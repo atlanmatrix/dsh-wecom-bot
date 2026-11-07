@@ -25,7 +25,11 @@ export class WecomBotController extends Service {
   async initialize() {
     const record = await this.ctx.credentials.readRecord(this.credentialKey)
     if (record) {
-      this.current = configurationSchema.required({ secret: true }).parse(record.payload.configuration)
+      const { provider: _legacyProvider, model: _legacyModel, ...configuration } = record.payload.configuration
+      this.current = configurationSchema.required({ secret: true }).parse(configuration)
+      if (_legacyProvider !== undefined || _legacyModel !== undefined) {
+        await this.ctx.credentials.modifyRecord(this.credentialKey, () => ({ kind: 'grant', payload: { configuration: this.current, enabled: record.payload.enabled === true } }))
+      }
       this.status = 'disconnected'
       // Saved configuration reconnects automatically after a normal Harness restart.
       if (record.payload.enabled) await this.connect()
