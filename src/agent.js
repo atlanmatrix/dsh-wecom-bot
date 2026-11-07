@@ -6,16 +6,36 @@ export function createAgentRunner(ctx, config) {
   const handles = new Map()
   let closed = false
   return {
-    async run(key, text, signal) {
+    async run(key, text, signal, identity = {}) {
       if (closed) throw new Error('Bridge stopped.')
       let handle = handles.get(key)
       if (!handle) {
         if (handles.size >= config.maxSessions) throw new Error('Session capacity reached.')
-        const creation = ctx.agents.create({
-          sessionId: `wecom-${randomUUID()}`,
-          meta: { cwd: config.cwd },
-          agentOptions: { provider: config.provider, model: config.model },
-        })
+        const saved = config.catalog?.get(key)
+        const title = saved?.title ?? `Wecom · ${identity.userId ?? 'user'}${identity.groupId ? ` · ${identity.groupId}` : ''}`
+        const creation = (async () => {
+          const workspaceRegistry = ctx.get('workspaceRegistry')
+          if (workspaceRegistry) await workspaceRegistry.create(config.cwd)
+          const existing = saved && ctx.agents.get(saved.sessionId)
+          let acquired
+          if (existing) acquired = { agent: existing, dispose: async () => {} }
+          else if (saved) acquired = await ctx.agents.resume({
+            resumeSessionId: saved.sessionId,
+            agentOptions: { provider: config.provider, model: config.model },
+            setup: (_agentCtx, agent) => { agent.model.select({ provider: config.provider, model: config.model }) },
+          })
+          else acquired = await ctx.agents.create({
+            sessionId: `wecom-${randomUUID()}`,
+            meta: { cwd: config.cwd },
+            agentOptions: { provider: config.provider, model: config.model },
+          })
+          try {
+            if (!saved) ctx.get('sessionTitle')?.rename(acquired.agent.session, title.slice(0, 80))
+            if (config.catalog && !saved) await config.catalog.put({ key, sessionId: acquired.agent.session.id, title,
+              userId: identity.userId ?? '', groupId: identity.groupId ?? '', chatType: identity.chatType ?? 'single', updatedAt: Date.now() })
+            return acquired
+          } catch (error) { await acquired.dispose(); throw error }
+        })()
         handles.set(key, creation)
         try { handle = await creation } catch (error) { handles.delete(key); throw error }
         if (closed) { await handle.dispose(); throw new Error('Bridge stopped.') }
@@ -38,11 +58,17 @@ export function createAgentRunner(ctx, config) {
       signal.addEventListener('abort', cancel, { once: true })
       try {
         signal.throwIfAborted()
+        if (config.catalog) {
+          const row = config.catalog.get(key)
+          if (row) await config.catalog.put({ ...row, updatedAt: Date.now() })
+        }
+        signal.throwIfAborted()
         agent.followup(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }))
         while (true) {
           await agent.whenIdle()
           const seq = agent.session.seq
-          const children = await ctx.get('subagents')?.waitForTreeWork(agent)
+          const subagents = ctx.get('subagents')
+          const children = typeof subagents?.waitForTreeWork === 'function' ? await subagents.waitForTreeWork(agent) : undefined
           if (!children && agent.status === 'idle' && agent.session.seq === seq) break
         }
         signal.throwIfAborted()

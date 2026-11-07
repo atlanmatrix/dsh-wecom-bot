@@ -73,6 +73,7 @@ test('agent runner preserves history, isolates sessions, and rejects capacity ov
     await mountAgentLoopTestDependencies(ctx)
     await mountAgentLoopTestHarness(ctx)
     ctx.llm.registerAdapter(['mock'], adapter)
+    ctx.provide('subagents', {}) // Older 0.2.2 compositions expose no tree-wait capability.
     const signal = new AbortController().signal
     assert.equal(await runner.run('user1', 'first', signal), 'DSH回复1')
     assert.equal(await runner.run('user1', 'second', signal), 'DSH回复2')
@@ -106,11 +107,10 @@ test('real DSH agent is cancelled at the request deadline', { timeout: 10000 }, 
   } finally { clearInterval(keepAlive); await runner.close(); await ctx.fiber.dispose() }
 })
 
-test('plugin configuration is discoverable and missing credentials fail before connection', async () => {
+test('plugin configuration stays discoverable before a bot is configured', async () => {
   const plugin = await import('../src/index.js')
   const schema = plugin.Config.toJSON()
   assert.equal(schema.refs[schema.uid].type, 'object')
-  assert.equal(plugin.Config({}).provider, 'deepseek')
+  assert.equal(plugin.Config({}).timeoutMs, 120000)
   assert.throws(() => plugin.Config({ timeoutMs: -1 }))
-  assert.throws(() => plugin.apply({}, { botIdEnv: 'NONEXISTENT_WECOM_TEST_ID', secretEnv: 'NONEXISTENT_WECOM_TEST_SECRET' }), /Set WECOM/)
 })

@@ -14,7 +14,7 @@ export function replyText(text) {
   return result + suffix
 }
 
-export function createBridge({ client, runner, timeoutMs = 120000, allowedUsers = [], maxPending = 10, log = () => {} }) {
+export function createBridge({ client, runner, timeoutMs = 120000, allowedUsers = [], maxPending = 10, botId, log = () => {} }) {
   const pending = new Map(), seen = new Map(), tasks = new Set()
   const lifetime = new AbortController()
   const handle = async frame => {
@@ -31,7 +31,7 @@ export function createBridge({ client, runner, timeoutMs = 120000, allowedUsers 
     seen.set(body.msgid, now + 10 * 60 * 1000)
     if (seen.size > 10000) seen.delete(seen.keys().next().value)
     // Group members do not share model history or tools' session state.
-    const key = JSON.stringify([body.aibotid, body.chattype, body.chatid ?? '', body.from.userid])
+    const key = JSON.stringify([botId ?? body.aibotid, body.chattype, body.chatid ?? '', body.from.userid])
     const previous = pending.get(key)
     if ((previous?.count ?? 0) >= maxPending) {
       await client.replyStream(frame, randomUUID(), '消息过多，请稍后重试。', true)
@@ -47,7 +47,7 @@ export function createBridge({ client, runner, timeoutMs = 120000, allowedUsers 
         await previous?.promise
         lifetime.signal.throwIfAborted()
         const signal = AbortSignal.any([lifetime.signal, AbortSignal.timeout(timeoutMs)])
-        const answer = await runner.run(key, body.text.content, signal)
+        const answer = await runner.run(key, body.text.content, signal, { userId: body.from.userid, groupId: body.chatid ?? '', chatType: body.chattype })
         if (!lifetime.signal.aborted) await client.replyStream(frame, streamId, replyText(answer), true)
       } catch {
         log('WeCom turn failed; details suppressed to protect credentials and message contents.')

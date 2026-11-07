@@ -2,10 +2,6 @@
     - id: wecom-bot
       name: dsh-wecom-bot
       config:
-        botIdEnv: WECOM_BOT_ID
-        secretEnv: WECOM_BOT_SECRET
-        provider: deepseek
-        model: deepseek-chat
         timeoutMs: 120000
         maxSessions: 100
         maxPending: 10
